@@ -1,0 +1,29 @@
+# System packages required by ATP tests
+# Add these to your root filesystem / package feed.
+#
+# Package name conventions vary by distro/buildroot — adjust as needed.
+
+# ── Core tools ────────────────────────────────────────
+python3          # pytest runtime
+python3-pip      # to install requirements.txt
+
+# ── System info ──────────────────────────────────────
+# util-linux      # lsblk (usually included with BusyBox)
+# procps          # nproc (or use /proc/cpuinfo directly)
+
+# ── Peripherals ──────────────────────────────────────
+usbutils         # lsusb  (USB device enumeration)
+ethtool          # Ethernet speed / duplex info
+pciutils         # lspci  (PCI device enumeration)
+
+# ── Firmware / BIOS ──────────────────────────────────
+dmidecode        # DMI/BIOS info (x86 only; needs root)
+efibootmgr       # UEFI boot order (UEFI systems only; needs root)
+
+# ── Network ──────────────────────────────────────────
+# iputils-ping or busybox ping is sufficient for most tests
+# For -M do (DF-bit) MTU tests, iputils-ping is preferred:
+# iputils
+
+# ── Serial ───────────────────────────────────────────
+# stty is provided by BusyBox — no extra package needed

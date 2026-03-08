@@ -1,0 +1,7 @@
+# Python dependencies for ATP
+# Install with: pip install -r requirements.txt
+
+pytest>=7.0
+pytest-html>=4.0
+pyyaml>=6.0
+weasyprint>=60.0

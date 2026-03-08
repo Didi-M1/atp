@@ -1,0 +1,130 @@
+# Example profile for a generic x86 embedded board.
+# Copy this file, rename it for your platform, and adjust values.
+
+name: example_x86
+extends: base
+description: "Example x86 embedded board with dual Ethernet, USB, SPI flash"
+
+system:
+  cpu:
+    min_cores: 4
+    expected_vendor: "GenuineIntel"
+    # expected_model: "Intel(R) Core(TM) i5"   # uncomment and set as needed
+    max_temp_c: 85.0
+
+  ram:
+    min_total_mb: 4096          # 4 GB
+
+  storage:
+    devices:
+      - path: /dev/sda
+        min_size_gb: 32
+        type: ssd
+      - path: /dev/mmcblk0
+        min_size_gb: 8
+        type: emmc
+
+peripherals:
+
+  usb:
+    enabled: true
+    expected_count: 2           # at least 2 USB devices visible via lsusb
+    # devices:                  # uncomment to check for specific devices
+    #   - vid: "0403"
+    #     pid: "6001"
+    #     description: "FTDI USB-serial"
+
+  spi:
+    enabled: true
+    buses:
+      - device: /dev/spidev0.0
+        description: "NOR flash"
+
+  ethernet:
+    enabled: true
+    interfaces:
+      - name: eth0
+        speed_mbps: 1000
+        description: "Primary LAN"
+      - name: eth1
+        speed_mbps: 1000
+        description: "Secondary LAN"
+
+  i2c:
+    enabled: true
+    buses:
+      - device: /dev/i2c-0
+        description: "System I2C bus"
+
+  wifi:
+    enabled: false              # no WiFi on this embedded board
+
+  bluetooth:
+    enabled: false              # no Bluetooth on this embedded board
+
+  audio:
+    enabled: false              # no audio on this embedded board
+
+  gpu:
+    enabled: false              # no discrete GPU on this embedded board
+
+firmware:
+  enabled: true
+
+  dmi:
+    enabled: true
+    checks:
+      sys_vendor: "ACME Corp"
+      product_name: "EmbedBoard v2"
+      bios_vendor: "American Megatrends"
+
+  uefi:
+    enabled: true
+    boot_order_first: "hdd"
+    power_restore: "last"       # restore previous power state after AC loss
+
+custom_checks:
+  - name: "RTC readable"
+    command: "hwclock --show"
+    expected_returncode: 0
+    description: "Hardware real-time clock must be accessible"
+  - name: "SysRq enabled"
+    command: "cat /proc/sys/kernel/sysrq"
+    expected_returncode: 0
+    expected_output: "1"
+    description: "SysRq must be enabled for reboot test"
+
+stability:
+  reboot:
+    enabled: true
+    count: 5
+    timeout_s: 120
+    max_boot_time_s: 60         # boot must complete within 60 s
+
+  poweroff:
+    enabled: false              # enable manually when testing AC-loss behaviour
+
+network:
+  enabled: true
+  interface: eth0
+  peer_ip: 192.168.100.2        # IP of the back-to-back host
+
+  mtu: 1500
+  # jumbo_mtu: 9000             # uncomment to also test jumbo frames
+
+  ping_count: 100
+  max_latency_ms: 1.0           # back-to-back link — must be < 1 ms avg
+  max_jitter_ms: 0.5
+  max_packet_loss_pct: 0.0
+
+serial:
+  enabled: true
+  ports:
+    - device: /dev/ttyS0
+      baud: 115200
+      description: "Debug UART"
+      loopback: false
+    - device: /dev/ttyUSB0
+      baud: 9600
+      description: "USB-Serial adapter"
+      loopback: false           # set true if loopback plug is installed

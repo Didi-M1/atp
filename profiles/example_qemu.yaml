@@ -1,0 +1,165 @@
+# ATP profile for a QEMU/KVM virtual machine.
+# Use this profile to validate the ATP framework itself without real hardware.
+#
+# Quick start (host):
+#   ./scripts/qemu/qemu-run.sh rootfs.img [--kernel bzImage]     # DUT VM
+#   ./scripts/qemu/qemu-peer.sh rootfs.img [--kernel bzImage]    # peer VM (new terminal)
+#
+# After the DUT boots, from the guest console:
+#   mount -t 9p -o trans=virtio atp /mnt/atp
+#   cd /mnt/atp
+#   pytest --profile=example_qemu
+#
+# QEMU virtual hardware → ATP profile mapping:
+#   Machine:   q35 + ICH9
+#   CPU:       host (KVM) or qemu64 (TCG)       → system.cpu
+#   Disk:      virtio-blk → /dev/vda             → system.storage.devices
+#   NIC #1:    e1000, socket back-to-back → eth0 → network.interface
+#   USB:       ICH9 EHCI root hub                → peripherals.usb.expected_count
+#   Thermal:   QEMU acpitz (up to 100 °C)        → system.cpu.max_temp_c
+#   Serial 0:  ttyS0 → host terminal (console)
+#   Serial 1:  ttyS1 → host PTY (ATP serial test device)
+#   9p share:  tag "atp" → /mnt/atp              → custom_checks
+#   SPI / I2C: not emulated                      → disabled
+#   UEFI:      SeaBIOS only (not UEFI)            → firmware.uefi disabled
+#
+# Kernel cmdline set by qemu-run.sh (only relevant when passing --kernel):
+#   root=/dev/vda rw
+#   console=ttyS0,115200
+#   net.ifnames=0 biosdevname=0      (keep ethX naming)
+#   ip=192.168.200.1::192.168.200.254:255.255.255.0::eth0:off
+#   sysrq_always_enabled=1
+#
+# Kernel config required for 9p share:
+#   CONFIG_NET_9P=y, CONFIG_NET_9P_VIRTIO=y, CONFIG_9P_FS=y
+#
+# Init system wiring needed for reboot stability test:
+#   1. Mount 9p on boot:  mount -t 9p -o trans=virtio atp /mnt/atp
+#   2. Wire continuation: /mnt/atp/scripts/atp-reboot-continue.sh
+
+name: example_qemu
+extends: base
+description: "QEMU/KVM virtual machine — validates ATP framework without real hardware"
+
+# ──────────────────────────────────────────────
+# SYSTEM
+# ──────────────────────────────────────────────
+system:
+  cpu:
+    min_cores: 2                # qemu-run.sh launches with -smp 2
+    # expected_vendor: not set — varies between KVM (host CPU) and TCG (qemu64)
+    max_temp_c: 100             # QEMU acpitz thermal zone ceiling
+
+  ram:
+    min_total_mb: 1024          # qemu-run.sh uses 2048 MiB; check for ≥ 1 GiB
+
+  storage:
+    devices:
+      - path: /dev/vda
+        min_size_gb: 1          # adjust to your rootfs image size
+        type: virtio
+
+# ──────────────────────────────────────────────
+# PERIPHERALS
+# ──────────────────────────────────────────────
+peripherals:
+
+  usb:
+    enabled: true
+    expected_count: 1           # ICH9 EHCI root hub appears in lsusb
+
+  spi:
+    enabled: false              # not emulated by QEMU
+
+  ethernet:
+    enabled: true
+    interfaces:
+      - name: eth0
+        # speed_mbps: not checked — QEMU e1000 does not reliably report speed via ethtool
+        description: "QEMU e1000 back-to-back (socket to peer VM)"
+
+  i2c:
+    enabled: false              # not emulated by QEMU
+
+  wifi:
+    enabled: false              # not emulated by QEMU
+
+  bluetooth:
+    enabled: false              # not emulated by QEMU
+
+  audio:
+    enabled: false              # not emulated by QEMU
+
+  gpu:
+    enabled: false              # not emulated by QEMU
+
+# ──────────────────────────────────────────────
+# FIRMWARE
+# ──────────────────────────────────────────────
+firmware:
+  enabled: true
+
+  dmi:
+    enabled: true
+    checks:
+      sys_vendor: "QEMU"
+      bios_vendor: "SeaBIOS"
+      # product_name: "Standard PC (Q35 + ICH9, 2009)"  # uncomment if desired
+
+  uefi:
+    enabled: false              # SeaBIOS is not UEFI
+
+# ──────────────────────────────────────────────
+# CUSTOM CHECKS
+# ──────────────────────────────────────────────
+custom_checks:
+  - name: "SysRq enabled"
+    command: "cat /proc/sys/kernel/sysrq"
+    expected_returncode: 0
+    expected_output: "1"
+    description: "SysRq must be enabled for reboot test (kernel cmdline: sysrq_always_enabled=1)"
+
+  - name: "ATP 9p share mounted"
+    command: "grep -q atp /proc/mounts"
+    expected_returncode: 0
+    description: "ATP virtio-9p share must be mounted (mount -t 9p -o trans=virtio atp /mnt/atp)"
+
+# ──────────────────────────────────────────────
+# STABILITY
+# ──────────────────────────────────────────────
+stability:
+  reboot:
+    enabled: true
+    count: 3
+    timeout_s: 120
+    max_boot_time_s: 60         # KVM boots in < 10 s; TCG < 60 s
+
+  poweroff:
+    enabled: false
+
+# ──────────────────────────────────────────────
+# NETWORK
+# ──────────────────────────────────────────────
+network:
+  enabled: true
+  interface: eth0
+  peer_ip: 192.168.200.2        # peer VM launched by qemu-peer.sh
+
+  mtu: 1500
+  # jumbo_mtu: null             # QEMU e1000 does not support jumbo frames
+
+  ping_count: 10                # fewer pings for quicker framework validation
+  max_latency_ms: 50.0          # QEMU socket network is slower than real hardware
+  max_jitter_ms: 20.0
+  max_packet_loss_pct: 0.0
+
+# ──────────────────────────────────────────────
+# SERIAL
+# ──────────────────────────────────────────────
+serial:
+  enabled: true
+  ports:
+    - device: /dev/ttyS1
+      baud: 115200
+      description: "QEMU serial 1 — PTY path printed by QEMU at startup"
+      loopback: false

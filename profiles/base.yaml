@@ -1,0 +1,175 @@
+# Base profile — all platform profiles should extend this.
+# Every field set to null means "skip this check".
+# Override only what you need in your platform profile.
+#
+# Sections marked  enabled: "~REQUIRED~"  MUST be explicitly set in every
+# platform profile to  enabled: true,  enabled: false,  or
+# assert_absent: true.  Forgetting a section causes load_profile() to raise
+# ProfileIncompleteError and list exactly what is missing.
+
+name: base
+extends: null
+description: "Base profile — not used directly"
+
+# ──────────────────────────────────────────────
+# SYSTEM INFO
+# ──────────────────────────────────────────────
+system:
+  enabled: true
+
+  cpu:
+    enabled: true
+    min_cores: null           # minimum logical CPU count (nproc)
+    expected_vendor: null     # exact match against /proc/cpuinfo "vendor_id"
+    expected_model: null      # substring match against "model name"
+    max_temp_c: null          # max allowed temp across all thermal zones
+
+  ram:
+    enabled: true
+    min_total_mb: null        # minimum MemTotal in /proc/meminfo
+
+  storage:
+    enabled: true
+    devices: []
+    # Each entry:
+    #   path:         /dev/sda          (required)
+    #   min_size_gb:  16                (optional)
+    #   type:         null              # informational only (ssd, emmc, nvme …)
+
+# ──────────────────────────────────────────────
+# PERIPHERALS
+# ──────────────────────────────────────────────
+peripherals:
+
+  usb:
+    enabled: "~REQUIRED~"
+    expected_count: null      # minimum number of USB devices reported by lsusb
+    devices: []
+    # Each entry (all optional):
+    #   vid:          "0403"
+    #   pid:          "6001"
+    #   description:  "FTDI USB-serial"
+
+  spi:
+    enabled: "~REQUIRED~"
+    buses: []
+    # Each entry:
+    #   device:       /dev/spidev0.0    (required — must exist)
+    #   description:  "NOR flash"
+
+  ethernet:
+    enabled: "~REQUIRED~"
+    interfaces: []
+    # Each entry:
+    #   name:         eth0              (required)
+    #   speed_mbps:   1000             (optional — checked via ethtool)
+    #   description:  "Primary LAN"
+
+  i2c:
+    enabled: "~REQUIRED~"
+    buses: []
+    # Each entry:
+    #   device:       /dev/i2c-0       (required — must exist)
+    #   description:  "System bus"
+
+  wifi:
+    enabled: "~REQUIRED~"
+    assert_absent: false      # set true to ASSERT no WiFi hardware exists (hardening check)
+    interface: null           # e.g. wlan0, wlp2s0
+    expected_ssid: null       # if set, verify connection to this SSID name
+
+  bluetooth:
+    enabled: "~REQUIRED~"
+    assert_absent: false      # set true to ASSERT no Bluetooth hardware exists (hardening check)
+    expected_controllers: 1   # minimum number of BT controllers in /sys/class/bluetooth
+
+  audio:
+    enabled: "~REQUIRED~"
+    expected_playback_cards: null   # minimum ALSA playback cards from aplay -l
+    cards: []
+    # Each entry:
+    #   name:         "ALC897"       (substring match in aplay -l output)
+    #   description:  "Analog output"
+
+  gpu:
+    enabled: "~REQUIRED~"
+    vendor_id: null           # PCI vendor ID string, e.g. "0x10de" (NVIDIA), "0x8086" (Intel)
+    render_node: null         # e.g. /dev/dri/renderD128
+
+# ──────────────────────────────────────────────
+# FIRMWARE / BIOS / UEFI
+# ──────────────────────────────────────────────
+firmware:
+  enabled: "~REQUIRED~"
+
+  dmi:
+    enabled: false
+    # Keys are DMI sysfs names under /sys/class/dmi/id/
+    # Values are expected exact strings.
+    # Example:
+    #   sys_vendor: "ACME Corp"
+    #   bios_vendor: "American Megatrends"
+    #   product_name: "EmbedBoard v2"
+    checks: {}
+
+  uefi:
+    enabled: false
+    boot_order_first: null    # "hdd" | "usb" | "pxe" | "net"
+    power_restore: null       # "last" | "on" | "off"  (after AC loss)
+
+# ──────────────────────────────────────────────
+# CUSTOM / PLATFORM-SPECIFIC CHECKS
+# ──────────────────────────────────────────────
+# Run arbitrary shell commands and verify returncode / stdout.
+# Useful for vendor-specific checks that don't fit a generic category.
+custom_checks: []
+# Each entry:
+#   name:               "Check RTC"             (required)
+#   command:            "hwclock --show"         (required — run via sh -c)
+#   expected_returncode: 0                       (default 0)
+#   expected_output:    null                     # substring that must appear in stdout
+#   description:        "Hardware clock readable"
+
+# ──────────────────────────────────────────────
+# STABILITY — REBOOT / POWEROFF
+# ──────────────────────────────────────────────
+stability:
+
+  reboot:
+    enabled: "~REQUIRED~"
+    count: 3                  # number of reboots to perform
+    timeout_s: 120            # seconds to wait for reboot trigger before failing
+    max_boot_time_s: null     # maximum allowed uptime when pytest resumes after reboot
+
+  poweroff:
+    enabled: "~REQUIRED~"
+    # When enabled the test issues a poweroff; operator must power on manually
+    # and re-run the suite.  Useful for "power-on after AC loss" validation.
+
+# ──────────────────────────────────────────────
+# NETWORK
+# ──────────────────────────────────────────────
+network:
+  enabled: "~REQUIRED~"
+  interface: null             # e.g. eth0  (must exist on DUT)
+  peer_ip: null               # IP of the back-to-back connected host
+
+  mtu: 1500                   # expected MTU — tested with DF-bit ping
+  jumbo_mtu: null             # if set, also test jumbo frames (e.g. 9000)
+
+  ping_count: 100
+  max_latency_ms: 10.0        # max allowed avg RTT
+  max_jitter_ms: null         # max allowed mdev (jitter); null = skip
+  max_packet_loss_pct: 0.0    # allowed packet loss percentage (0.0 = no loss)
+
+# ──────────────────────────────────────────────
+# SERIAL PORTS
+# ──────────────────────────────────────────────
+serial:
+  enabled: "~REQUIRED~"
+  ports: []
+  # Each entry:
+  #   device:       /dev/ttyS0         (required)
+  #   baud:         115200             (required)
+  #   description:  "Debug UART"
+  #   loopback:     false              # set true if TX/RX are physically connected
