@@ -14,7 +14,9 @@ Reboot test flow
    - Record uptime (boot time)
    - Increment iteration
    - If more reboots remain: reboot again
-   - If this was the last reboot: validate all boot times, clear state, PASS
+   - If this was the last reboot: clear state file first, then assert boot
+     times (file is removed whether the assertions pass or fail, so the
+     system is never stuck in continuation mode after the final iteration)
 
 Profile keys used:
     stability.reboot.enabled, .count, .max_boot_time_s
@@ -71,12 +73,6 @@ class TestReboot:
             boot_times.append(uptime)
             iteration += 1
 
-            if max_boot_s is not None:
-                assert uptime <= max_boot_s, (
-                    f"Reboot {iteration}/{total}: boot took {uptime:.1f} s "
-                    f"(limit {max_boot_s} s)"
-                )
-
             if iteration < total:
                 # More reboots to do
                 state["iteration"] = iteration
@@ -84,9 +80,16 @@ class TestReboot:
                 stability.save_state(state)
                 _do_reboot()  # noreturn
             else:
-                # All reboots complete
+                # Final iteration — remove the state file now so that a
+                # subsequent assertion failure does not leave the system
+                # stuck in continuation mode on the next run.
                 stability.clear_state()
                 summary = ", ".join(f"{t:.1f}s" for t in boot_times)
+                if max_boot_s is not None:
+                    assert uptime <= max_boot_s, (
+                        f"Reboot {iteration}/{total}: boot took {uptime:.1f} s "
+                        f"(limit {max_boot_s} s)"
+                    )
                 print(
                     f"\nReboot test PASSED — {total} reboots completed.\n"
                     f"Boot times: {summary}"
