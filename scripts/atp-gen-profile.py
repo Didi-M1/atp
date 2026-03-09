@@ -642,6 +642,85 @@ def cfg_serial() -> dict:
     return {"enabled": True, "ports": ports}
 
 
+def cfg_stress() -> dict:
+    """
+    @brief Interactively configure the 'stress' profile section.
+    @return Dict ready to be written as the 'stress' key in the profile.
+    """
+    section("STRESS TESTS")
+
+    if not ask_yn("Enable stress tests?", default=False):
+        return {"enabled": False}
+
+    duration_s = ask_int("Stress duration per test (s)", default=30, min_val=1)
+
+    # ── CPU ──
+    print()
+    cpu_info = probe_cpu()
+    detected(f"CPU cores: {cpu_info['cores']}")
+    cpu_enabled = ask_yn("Enable CPU stress test?", default=True)
+    cpu: dict = {"enabled": cpu_enabled}
+    if cpu_enabled:
+        cpu["workers"] = ask_int("CPU worker count (0 = all cores)",
+                                 default=cpu_info["cores"] or 0)
+        min_mbps = ask_float_or_none("Min CPU throughput (MB/s) — Enter to skip")
+        if min_mbps is not None:
+            cpu["min_throughput_mbps"] = min_mbps
+
+    # ── RAM ──
+    print()
+    ram_mb = probe_ram_mb()
+    detected(f"Total RAM: {ram_mb} MB")
+    ram_enabled = ask_yn("Enable RAM stress test?", default=True)
+    ram: dict = {"enabled": ram_enabled}
+    if ram_enabled:
+        default_size = max(64, (ram_mb or 256) // 4)
+        ram["size_mb"] = ask_int("RAM buffer size to test (MB)", default=default_size, min_val=1)
+        min_write = ask_float_or_none("Min RAM write throughput (MB/s) — Enter to skip")
+        min_read  = ask_float_or_none("Min RAM read  throughput (MB/s) — Enter to skip")
+        if min_write is not None:
+            ram["min_write_mbps"] = min_write
+        if min_read is not None:
+            ram["min_read_mbps"] = min_read
+
+    # ── Disk ──
+    print()
+    blk = probe_block_devices()
+    detected(f"Block devices: {[d['path'] for d in blk] or 'none found'}")
+    disk_enabled = ask_yn("Enable disk stress test?", default=bool(blk))
+    disk: dict = {"enabled": disk_enabled}
+    if disk_enabled:
+        disk["path"]    = ask("Disk path or directory for test file", default="/tmp")
+        disk["size_mb"] = ask_int("Test file size (MB)", default=512, min_val=1)
+        min_write = ask_float_or_none("Min disk write throughput (MB/s) — Enter to skip")
+        min_read  = ask_float_or_none("Min disk read  throughput (MB/s) — Enter to skip")
+        if min_write is not None:
+            disk["min_write_mbps"] = min_write
+        if min_read is not None:
+            disk["min_read_mbps"] = min_read
+
+    # ── GPU ──
+    print()
+    gpu_vid, render_node = probe_gpu()
+    detected(f"GPU: vendor_id={gpu_vid or 'not found'}  render_node={render_node or 'not found'}")
+    gpu_enabled = ask_yn("Enable GPU stress test (requires glmark2)?",
+                         default=bool(render_node) and tool_exists("glmark2"))
+    gpu: dict = {"enabled": gpu_enabled}
+    if gpu_enabled:
+        min_score = ask_float_or_none("Min glmark2 score — Enter to skip")
+        if min_score is not None:
+            gpu["min_score"] = int(min_score)
+
+    return {
+        "enabled":    True,
+        "duration_s": duration_s,
+        "cpu":        cpu,
+        "ram":        ram,
+        "disk":       disk,
+        "gpu":        gpu,
+    }
+
+
 # ── YAML output ───────────────────────────────────────────────────────────────
 
 def _none_representer(dumper, _):
@@ -695,13 +774,14 @@ def main() -> None:
         "description": description,
     }
 
-    profile["system"]       = cfg_system()
-    profile["peripherals"]  = cfg_peripherals()
-    profile["firmware"]     = cfg_firmware()
+    profile["system"]        = cfg_system()
+    profile["peripherals"]   = cfg_peripherals()
+    profile["firmware"]      = cfg_firmware()
     profile["custom_checks"] = cfg_custom_checks()
-    profile["stability"]    = cfg_stability()
-    profile["network"]      = cfg_network()
-    profile["serial"]       = cfg_serial()
+    profile["stability"]     = cfg_stability()
+    profile["network"]       = cfg_network()
+    profile["serial"]        = cfg_serial()
+    profile["stress"]        = cfg_stress()
 
     section("SAVE PROFILE")
     profiles_dir = Path(__file__).resolve().parent.parent / "profiles"
