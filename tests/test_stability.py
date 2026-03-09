@@ -24,6 +24,7 @@ Profile keys used:
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -34,7 +35,76 @@ from atp.utils import run_cmd
 
 pytestmark = pytest.mark.stability
 
-_SYSRQ_REBOOT = "/proc/sysrq-trigger"
+_SYSRQ_REBOOT   = "/proc/sysrq-trigger"
+_SYSRQ_CTRL     = "/proc/sys/kernel/sysrq"
+_SYSRQ_BIT_REBOOT = 128   # bit 7 — allow reboot/poweroff via sysrq
+
+
+def _check_sysrq_reboot() -> None:
+    """Verify the current user can trigger a reboot via sysrq.
+
+    Checks three things in order and fails with a clear explanation if any
+    condition is not met:
+
+    1. /proc/sysrq-trigger exists  → kernel built without CONFIG_MAGIC_SYSRQ
+    2. /proc/sysrq-trigger is writable → process lacks write permission
+    3. /proc/sys/kernel/sysrq has the reboot bit set → sysrq disabled at runtime
+    """
+    if os.getuid() != 0:
+        pytest.fail(
+            "Reboot test requires root privileges "
+            f"(current uid={os.getuid()}).\n"
+            "Re-run the test as root:\n"
+            "  sudo pytest --profile=<name> tests/test_stability.py"
+        )
+
+    trigger = Path(_SYSRQ_REBOOT)
+
+    if not trigger.exists():
+        pytest.fail(
+            f"{_SYSRQ_REBOOT} not found.\n"
+            "The kernel must be built with CONFIG_MAGIC_SYSRQ=y.\n"
+            "For the ATP QEMU image this is already enabled; on a custom kernel\n"
+            "rebuild with that option or add 'sysrq_always_enabled=1' to the\n"
+            "kernel command line."
+        )
+
+    if not os.access(_SYSRQ_REBOOT, os.W_OK):
+        pytest.fail(
+            f"{_SYSRQ_REBOOT} exists but is not writable by the current user "
+            f"(uid={os.getuid()}).\n"
+            "Run the test as root, or grant write access with:\n"
+            "  chmod a+w /proc/sysrq-trigger\n"
+            "or add the running user to a group that can write to it."
+        )
+
+    sysrq_val = 0
+    try:
+        sysrq_val = int(Path(_SYSRQ_CTRL).read_text().strip())
+    except (OSError, ValueError):
+        pass  # if we can't read it, assume it's enabled and let the write fail
+
+    if sysrq_val == 0:
+        pytest.fail(
+            f"sysrq is disabled ('{_SYSRQ_CTRL}' == 0).\n"
+            "Enable it at runtime with:\n"
+            "  echo 1 > /proc/sys/kernel/sysrq\n"
+            "or permanently via /etc/sysctl.conf:\n"
+            "  kernel.sysrq = 1\n"
+            "For the ATP QEMU image add 'sysrq_always_enabled=1' to the\n"
+            "kernel command line (already set in qemu-run.sh)."
+        )
+
+    reboot_allowed = (sysrq_val == 1) or bool(sysrq_val & _SYSRQ_BIT_REBOOT)
+    if not reboot_allowed:
+        pytest.fail(
+            f"sysrq is enabled ('{_SYSRQ_CTRL}' == {sysrq_val}) but the reboot\n"
+            f"bit (bit 7 = {_SYSRQ_BIT_REBOOT}) is not set.\n"
+            "Allow reboot via sysrq with:\n"
+            f"  echo $(( {sysrq_val} | {_SYSRQ_BIT_REBOOT} )) > {_SYSRQ_CTRL}\n"
+            "or enable all sysrq functions:\n"
+            f"  echo 1 > {_SYSRQ_CTRL}"
+        )
 
 
 def _do_reboot() -> None:
@@ -97,10 +167,7 @@ class TestReboot:
                 return  # test passes
 
         # ── First run ──────────────────────────────────────────────────────
-        assert Path(_SYSRQ_REBOOT).exists(), (
-            f"{_SYSRQ_REBOOT} not found — enable CONFIG_MAGIC_SYSRQ in kernel "
-            "or set kernel.sysrq=1"
-        )
+        _check_sysrq_reboot()
 
         state = stability.new_state(
             profile_name=profile_name,
@@ -134,9 +201,7 @@ class TestPoweroff:
         1. Physically power the board back on.
         2. Verify the system boots correctly (manually or via another test run).
         """
-        assert Path(_SYSRQ_REBOOT).exists(), (
-            f"{_SYSRQ_REBOOT} not found — sysrq must be enabled"
-        )
+        _check_sysrq_reboot()
 
         print("\nIssuing poweroff via sysrq-o — power on manually after shutdown.")
         Path(_SYSRQ_REBOOT).write_text("o")

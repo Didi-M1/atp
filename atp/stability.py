@@ -37,10 +37,13 @@ def get_state() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
-    """Persist the state dict to disk."""
+    """Persist the state dict to disk and fsync so data survives a reboot."""
     sf = _state_file()
     sf.parent.mkdir(parents=True, exist_ok=True)
-    sf.write_text(json.dumps(state, indent=2))
+    with open(sf, "w") as f:
+        f.write(json.dumps(state, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def clear_state() -> None:
