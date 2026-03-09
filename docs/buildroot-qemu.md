@@ -122,7 +122,7 @@ BR2_PACKAGE_UTIL_LINUX_BINARIES=y         # lsblk — storage test
 **`board/atp/qemu-x86_64/post-build.sh`** runs after all packages are installed, before the image is packed. It:
 
 1. Creates `/mnt/atp` — the mount point for the virtio-9p share
-2. Creates `/var/lib/atp` — state directory used by the reboot stability test
+2. Creates `/root/.atp` — state directory for the reboot stability test (the QEMU guest runs as root; on real hardware this is `~/.atp` for whichever user runs the tests)
 3. Installs `/etc/init.d/S50atp` — a BusyBox init script that runs at every boot:
    - Mounts the host ATP project directory at `/mnt/atp` via virtio-9p
    - Runs `scripts/atp-reboot-continue.sh` in the background (exits immediately if no reboot test is in progress — safe to run always)

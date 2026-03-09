@@ -17,7 +17,7 @@
 # This script does nothing if no reboot test is in progress (safe to leave
 # installed permanently).
 
-STATE_FILE="${ATP_STATE_FILE:-/var/lib/atp/reboot_state.json}"
+STATE_FILE="${ATP_STATE_FILE:-${HOME:-/root}/.atp/reboot_state.json}"
 LOG_FILE="/var/log/atp-reboot.log"
 
 # Nothing to do if no active reboot test

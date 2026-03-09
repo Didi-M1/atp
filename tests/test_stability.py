@@ -3,7 +3,7 @@
 Reboot test flow
 ----------------
 1. First run (no state file):
-   - Write /var/lib/atp/reboot_state.json with {iteration: 0, total: N, ...}
+   - Write ~/.atp/reboot_state.json with {iteration: 0, total: N, ...}
    - Trigger reboot via sysrq
    - pytest process exits (reboot)
 
