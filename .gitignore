@@ -19,6 +19,9 @@ env/
 .pytest_cache/
 .cache/
 
+# ── ATP personal / machine-specific profiles ──
+profiles/didi_desktop.yaml
+
 # ── ATP generated reports ─────────────────────
 *.html
 *.pdf
