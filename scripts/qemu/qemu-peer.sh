@@ -9,7 +9,7 @@
 #                Default: ../../buildroot/output/images/rootfs.ext2
 #   --kernel     Kernel image for direct boot (sets eth0 IP via cmdline).
 #                Default: ../../buildroot/output/images/bzImage
-#   --port       TCP port of the DUT to connect to.
+#   --port       UDP multicast port shared with the DUT VM.
 #                Default: 15555
 #
 # The peer VM sets 192.168.200.2 on eth0 and responds to pings and packets
@@ -75,17 +75,10 @@ QEMU_CPU="${QEMU_CPU:-$CPU_DEFAULT}"
 
 # ── Image format ───────────────────────────────────────────────────────────────
 if command -v qemu-img >/dev/null 2>&1; then
-    IMG_FMT=$(qemu-img info --output=json "$ROOTFS_IMG" 2>/dev/null \
-        | grep -o '"format"[[:space:]]*:[[:space:]]*"[^"]*"' \
-        | sed 's/.*"\([^"]*\)"/\1/')
-    IMG_FMT="${IMG_FMT:-raw}"
-else
-    MAGIC=$(dd if="$ROOTFS_IMG" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    case "$MAGIC" in
-        514669fb) IMG_FMT="qcow2" ;;
-        *)         IMG_FMT="raw"  ;;
-    esac
+    IMG_FMT=$(qemu-img info "$ROOTFS_IMG" 2>/dev/null \
+        | sed -n 's/^file format: //p')
 fi
+IMG_FMT="${IMG_FMT:-raw}"
 echo "[qemu-peer] Rootfs: $(basename "$ROOTFS_IMG")  format=$IMG_FMT"
 echo "[qemu-peer] Kernel: $(basename "$KERNEL")"
 
@@ -97,8 +90,7 @@ echo ""
 echo "---------------------------------------------------------------"
 echo "  ATP Peer VM   RAM=512 MiB   CPU=$QEMU_CPU"
 echo "  Peer IP:  192.168.200.2  (eth0)"
-echo "  Connecting to DUT at 127.0.0.1:${SOCKET_PORT}"
-echo "  (start qemu-run.sh first so the DUT is listening)"
+echo "  Network:  UDP multicast 230.0.0.1:${SOCKET_PORT} (shared with DUT)"
 echo "  ttyS0 → this terminal (guest console)"
 echo "---------------------------------------------------------------"
 echo ""
@@ -121,8 +113,8 @@ set -- "$@" -m     512
 set -- "$@" -smp   1
 # Disk: write to qcow2 overlay; backing file (rootfs.ext2) is opened read-only
 set -- "$@" -drive "file=${OVERLAY},format=qcow2,if=virtio"
-# Network: connect to DUT socket (DUT must be listening first)
-set -- "$@" -netdev "socket,id=net0,connect=127.0.0.1:${SOCKET_PORT}"
+# Network: same UDP multicast group as the DUT — no connection, no race.
+set -- "$@" -netdev "socket,id=net0,mcast=230.0.0.1:${SOCKET_PORT},localaddr=127.0.0.1"
 set -- "$@" -device "e1000,netdev=net0"
 # Serial 0: guest console on stdio
 set -- "$@" -serial mon:stdio
@@ -131,5 +123,36 @@ set -- "$@" -nographic
 set -- "$@" -kernel "$KERNEL"
 set -- "$@" -append "$KERNEL_APPEND"
 
-exec "$@"
-# (trap cleanup runs after QEMU exits)
+# ── Launch ─────────────────────────────────────────────────────────────────────
+if command -v expect >/dev/null 2>&1; then
+    # Auto-login then hand control back to the user (interact).
+    QEMU_WRAPPER=$(mktemp /tmp/atp-peer-XXXXXX.sh)
+    EXPECT_SCRIPT=$(mktemp /tmp/atp-peer-expect-XXXXXX.tcl)
+    trap 'rm -f "$OVERLAY" "$QEMU_WRAPPER" "$EXPECT_SCRIPT"' EXIT INT TERM
+    {
+        printf '#!/bin/sh\nexec'
+        for arg in "$@"; do
+            printf " '%s'" "$(printf '%s' "$arg" | sed "s/'/'\\\\''/g")"
+        done
+        printf '\n'
+    } > "$QEMU_WRAPPER"
+    chmod +x "$QEMU_WRAPPER"
+
+    cat > "$EXPECT_SCRIPT" << EXPECT_EOF
+log_user 1
+set timeout 120
+spawn $QEMU_WRAPPER
+expect {
+    "buildroot login:" { send "root\r"; exp_continue }
+    "Password:"        { send "root\r"; exp_continue }
+    "# "               {}
+}
+interact
+EXPECT_EOF
+
+    expect -f "$EXPECT_SCRIPT"
+else
+    echo "[qemu-peer] 'expect' not found — auto-login disabled. Install: sudo apt install expect"
+    "$@"
+fi
+# trap cleanup (EXIT) runs here after QEMU exits
