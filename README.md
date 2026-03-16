@@ -133,7 +133,7 @@ Available markers: `system`, `peripherals`, `firmware`, `network`, `serial`, `st
 
 ## Reboot stability tests
 
-The reboot test reboots the board N times and checks that each boot completes within `max_boot_time_s`. State survives reboots via `/var/lib/atp/reboot_state.json`.
+The reboot test reboots the board N times and checks that each boot completes within `max_boot_time_s`. State survives reboots via `~/.atp/reboot_state.json` (no root access required; override with `ATP_STATE_FILE`).
 
 Wire `scripts/atp-reboot-continue.sh` into your init system so it runs on every boot — it re-invokes pytest automatically after each reboot and is a no-op when no test is in progress.
 

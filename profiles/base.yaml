@@ -173,3 +173,32 @@ serial:
   #   baud:         115200             (required)
   #   description:  "Debug UART"
   #   loopback:     false              # set true if TX/RX are physically connected
+
+# ──────────────────────────────────────────────
+# STRESS TESTS
+# ──────────────────────────────────────────────
+stress:
+  enabled: "~REQUIRED~"
+  duration_s: 30            # seconds each sub-test runs
+
+  cpu:
+    enabled: true
+    workers: null           # null = os.cpu_count() — one worker process per core
+    min_throughput_mbps: null  # aggregate SHA-256 throughput; null = no threshold
+
+  ram:
+    enabled: true
+    size_mb: null           # null = 25% of MemTotal; set explicitly to override
+    min_write_mbps: null
+    min_read_mbps: null
+
+  disk:
+    enabled: true
+    path: /tmp              # directory to create the temporary stress file under
+    size_mb: 512
+    min_write_mbps: null
+    min_read_mbps: null
+
+  gpu:
+    enabled: false          # requires glmark2 installed (glmark2 --off-screen)
+    min_score: null         # minimum glmark2 score; null = no threshold

@@ -128,3 +128,28 @@ serial:
       baud: 9600
       description: "USB-Serial adapter"
       loopback: false           # set true if loopback plug is installed
+
+stress:
+  enabled: true
+  duration_s: 30
+
+  cpu:
+    enabled: true
+    workers: null               # use all cores
+    min_throughput_mbps: null
+
+  ram:
+    enabled: true
+    size_mb: null               # 25% of MemTotal
+    min_write_mbps: null
+    min_read_mbps: null
+
+  disk:
+    enabled: true
+    path: /tmp
+    size_mb: 256                # smaller than default for typical embedded storage
+    min_write_mbps: null
+    min_read_mbps: null
+
+  gpu:
+    enabled: false              # no GPU on this embedded board

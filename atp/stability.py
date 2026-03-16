@@ -4,7 +4,7 @@ State is persisted in a JSON file so it survives reboots.
 The test runner (pytest) is expected to be re-invoked after each reboot
 by an init script (see scripts/atp-reboot-continue.sh).
 
-State file location: /var/lib/atp/reboot_state.json
+State file location: ~/.atp/reboot_state.json
 (Override via ATP_STATE_FILE environment variable for testing.)
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-_DEFAULT_STATE_FILE = Path("/var/lib/atp/reboot_state.json")
+_DEFAULT_STATE_FILE = Path.home() / ".atp" / "reboot_state.json"
 
 
 def _state_file() -> Path:
@@ -37,10 +37,13 @@ def get_state() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
-    """Persist the state dict to disk."""
+    """Persist the state dict to disk and fsync so data survives a reboot."""
     sf = _state_file()
     sf.parent.mkdir(parents=True, exist_ok=True)
-    sf.write_text(json.dumps(state, indent=2))
+    with open(sf, "w") as f:
+        f.write(json.dumps(state, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def clear_state() -> None:

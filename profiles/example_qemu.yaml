@@ -163,3 +163,28 @@ serial:
       baud: 115200
       description: "QEMU serial 1 — PTY path printed by QEMU at startup"
       loopback: false
+
+stress:
+  enabled: true
+  duration_s: 15              # shorter duration — QEMU is slower than real hardware
+
+  cpu:
+    enabled: true
+    workers: null             # use all vCPUs
+    min_throughput_mbps: null
+
+  ram:
+    enabled: true
+    size_mb: 256              # QEMU VM has 2 GiB; 256 MiB is a safe target
+    min_write_mbps: null
+    min_read_mbps: null
+
+  disk:
+    enabled: true
+    path: /tmp
+    size_mb: 128              # keep small — virtio-blk over QEMU is slow
+    min_write_mbps: null
+    min_read_mbps: null
+
+  gpu:
+    enabled: false            # no GPU emulated in QEMU

@@ -135,7 +135,8 @@ class TestEthernet:
             # "state UP" or "LOWER_UP" flag in flags field
             state_ok = "UP" in out
             assert state_ok, (
-                f"Interface {name} is not UP — check cable/switch\n{out}"
+                f"Interface {name} exists but has no link — connect an Ethernet "
+                f"cable to {name} and re-run.\n{out}"
             )
 
     def test_interface_speed(self, profile):
@@ -154,7 +155,10 @@ class TestEthernet:
             expected_mbps = iface["speed_mbps"]
             rc, out, _ = run_cmd(f"ethtool {name}")
             if rc != 0:
-                pytest.fail(f"ethtool {name} failed")
+                pytest.fail(
+                    f"ethtool {name} failed — interface exists but may have no link. "
+                    f"Connect an Ethernet cable to {name} and re-run."
+                )
 
             for line in out.splitlines():
                 if "speed:" in line.lower():
@@ -162,11 +166,15 @@ class TestEthernet:
                     token = line.split(":", 1)[1].strip()
                     actual_mbps = int("".join(filter(str.isdigit, token)))
                     assert actual_mbps == expected_mbps, (
-                        f"{name}: expected {expected_mbps} Mb/s, got {actual_mbps} Mb/s"
+                        f"{name}: expected {expected_mbps} Mb/s, got {actual_mbps} Mb/s — "
+                        f"check the cable and switch port speed."
                     )
                     break
             else:
-                pytest.fail(f"Could not parse speed from ethtool output for {name}")
+                pytest.fail(
+                    f"Could not read link speed for {name} — "
+                    f"connect an Ethernet cable to {name} and re-run."
+                )
 
 
 # ──────────────────────────────────────────────

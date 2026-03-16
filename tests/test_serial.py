@@ -107,9 +107,12 @@ class TestSerial:
 
             rc, out, err = run_cmd(f"stty -F {device} {baud} raw")
             if rc != 0:
-                failures.append(
-                    f"  {device} ({desc}): stty failed — {err or out}"
-                )
+                msg = err or out
+                if "Permission denied" in msg:
+                    msg += (
+                        f"\n    → Fix: run tests as root, or: chmod 666 {device}"
+                    )
+                failures.append(f"  {device} ({desc}): stty failed — {msg}")
 
         if failures:
             pytest.fail(
@@ -151,6 +154,11 @@ def _loopback_test(device: str, baud: int, timeout_s: float = 2.0) -> bool | str
     try:
         fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
     except OSError as exc:
+        if exc.errno == errno.EACCES:
+            return (
+                f"Permission denied opening {device} — "
+                f"run tests as root, or: chmod 666 {device}"
+            )
         return f"Cannot open: {exc}"
 
     try:
