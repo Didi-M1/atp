@@ -1,11 +1,15 @@
 """Reboot / poweroff state machine for multi-iteration stability tests.
 
-State is persisted in a JSON file so it survives reboots.
+State is persisted in JSON files so it survives reboots.
 The test runner (pytest) is expected to be re-invoked after each reboot
 by an init script (see scripts/atp-reboot-continue.sh).
 
-State file location: ~/.atp/reboot_state.json
-(Override via ATP_STATE_FILE environment variable for testing.)
+State files (both in the same directory):
+  reboot_state.json  — active reboot sequence (iteration counter, boot times)
+  session_state.json — cross-reboot passed-test registry (which tests to skip)
+
+Default location: ~/.atp/
+Override via ATP_STATE_FILE environment variable (full path of reboot_state.json).
 """
 from __future__ import annotations
 
@@ -50,6 +54,43 @@ def clear_state() -> None:
     """Remove the state file (reboot test is complete)."""
     _state_file().unlink(missing_ok=True)
 
+
+# ── Session state (passed-test registry) ─────────────────────────────────────
+
+def _session_file() -> Path:
+    """Path of the session state file (same directory as the reboot state file)."""
+    return _state_file().parent / "session_state.json"
+
+
+def load_passed_tests() -> set[str]:
+    """Return the set of test node IDs that passed in an earlier session."""
+    try:
+        return set(json.loads(_session_file().read_text()).get("passed", []))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+
+def record_passed_test(node_id: str) -> None:
+    """Append *node_id* to the session state file.
+
+    Uses fsync so the entry survives an imminent sysrq reboot.
+    """
+    sf = _session_file()
+    sf.parent.mkdir(parents=True, exist_ok=True)
+    passed = load_passed_tests()
+    passed.add(node_id)
+    with open(sf, "w") as f:
+        f.write(json.dumps({"passed": sorted(passed)}, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def clear_session() -> None:
+    """Remove the session state file (start a fresh test run)."""
+    _session_file().unlink(missing_ok=True)
+
+
+# ── Uptime ────────────────────────────────────────────────────────────────────
 
 def current_uptime_s() -> float:
     """Return system uptime in seconds (from /proc/uptime)."""
