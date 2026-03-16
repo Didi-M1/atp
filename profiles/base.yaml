@@ -36,6 +36,12 @@ system:
     #   min_size_gb:  16                (optional)
     #   type:         null              # informational only (ssd, emmc, nvme …)
 
+  rtc:
+    enabled: true
+    device: /dev/rtc0         # RTC device node that must exist
+    min_year: 2020            # hardware clock year must be >= this (sanity check)
+    max_drift_s: null         # max allowed delta between hwclock and system time; null = skip
+
 # ──────────────────────────────────────────────
 # PERIPHERALS
 # ──────────────────────────────────────────────
@@ -61,9 +67,9 @@ peripherals:
     enabled: "~REQUIRED~"
     interfaces: []
     # Each entry:
-    #   name:         eth0              (required)
-    #   speed_mbps:   1000             (optional — checked via ethtool)
-    #   description:  "Primary LAN"
+    #   name:        eth0     (required)
+    #   speed_mbps:  1000    (optional — checked via ethtool)
+    #   description: "Primary LAN"
 
   i2c:
     enabled: "~REQUIRED~"
@@ -202,3 +208,41 @@ stress:
   gpu:
     enabled: false          # requires glmark2 installed (glmark2 --off-screen)
     min_score: null         # minimum glmark2 score; null = no threshold
+
+# ──────────────────────────────────────────────
+# MANUAL TESTS (operator-interactive)
+# ──────────────────────────────────────────────
+# These tests require a human operator and must NOT run in CI.
+# Run selectively with:  pytest --profile=<name> -m manual
+# Exclude in CI with:    pytest --profile=<name> -m "not manual"
+manual:
+  enabled: "~REQUIRED~"
+
+  ethernet:
+    link_test: []
+    # Interfaces to run the physical link-detect test on (connect → verify UP,
+    # disconnect → verify DOWN).  Names must match peripherals.ethernet.interfaces.
+    # Each entry:
+    #   name:        eth0          (required)
+    #   description: "Primary LAN" (optional)
+    #   timeout_s:   15            (optional — seconds to wait for state change)
+
+    cable_id: []
+    # Interfaces to verify physical cable assignment (which OS name → which network).
+    # Each entry:
+    #   name:          eth0          (required)
+    #   network_label: "MANAGEMENT"  (required — label on the cable or switch port)
+    #   description:   "Primary LAN" (optional)
+
+  sd_card:
+    enabled: false
+    device: null              # block device path, e.g. /dev/mmcblk0 or /dev/sdb
+    min_size_mb: null         # minimum card capacity (MiB); null = skip check
+    min_write_mbps: null      # minimum write throughput floor; null = skip
+    min_read_mbps: null       # minimum read throughput floor; null = skip
+
+  rtc_battery:
+    enabled: false
+    # Operator disconnects mains power, waits, reconnects.
+    # The test verifies the RTC retained the correct time.
+    max_drift_s: 5            # maximum allowed RTC drift (seconds) across the power cycle

@@ -272,6 +272,27 @@ def probe_gpu() -> tuple[str | None, str | None]:
     return vid, (nodes[0] if nodes else None)
 
 
+def probe_rtc() -> dict:
+    """
+    @brief Detect the first RTC device node and read the current hardware clock year.
+    @return Dict with keys: device (str|None), year (int|None).
+    """
+    device = None
+    for candidate in ["/dev/rtc0", "/dev/rtc"]:
+        if Path(candidate).exists():
+            device = candidate
+            break
+    year = None
+    if tool_exists("hwclock"):
+        _, out, _ = run_cmd("hwclock --show --utc 2>/dev/null")
+        if out.strip():
+            try:
+                year = int(out.strip().split("-")[0])
+            except (ValueError, IndexError):
+                pass
+    return {"device": device, "year": year}
+
+
 def probe_serial_ports() -> list[str]:
     """
     @brief Discover serial port devices (ttyS*, ttyUSB*, ttyACM*).
@@ -335,6 +356,15 @@ def cfg_system() -> dict:
             dtype  = ask(f"Device type for {d['path']}", default=d["type"] or "ssd")
             storage_devs.append({"path": d["path"], "min_size_gb": min_gb, "type": dtype})
 
+    rtc = probe_rtc()
+    detected(f"RTC device: {rtc['device'] or 'not found'}  hwclock year: {rtc['year'] or 'n/a'}")
+    rtc_enabled = ask_yn("Enable RTC checks?", default=bool(rtc["device"]))
+    rtc_cfg: dict = {"enabled": rtc_enabled}
+    if rtc_enabled:
+        rtc_cfg["device"]    = ask("RTC device node", default=rtc["device"] or "/dev/rtc0")
+        rtc_cfg["min_year"]  = ask_int("Minimum sane year for hwclock", default=rtc["year"] or 2020)
+        rtc_cfg["max_drift_s"] = ask_float_or_none("Max drift vs system clock (s) — Enter to skip")
+
     return {
         "cpu": {
             "min_cores":       min_cores,
@@ -344,6 +374,7 @@ def cfg_system() -> dict:
         },
         "ram":     {"min_total_mb": min_mb},
         "storage": {"devices": storage_devs},
+        "rtc":     rtc_cfg,
     }
 
 
@@ -721,6 +752,101 @@ def cfg_stress() -> dict:
     }
 
 
+def cfg_manual() -> dict:
+    """
+    @brief Interactively configure the 'manual' profile section.
+    @return Dict ready to be written as the 'manual' key in the profile.
+    """
+    section("MANUAL TESTS (operator-interactive)")
+    print("  Manual tests require a human operator with physical access.")
+    print("  Run with:  pytest --profile=<name> -m manual")
+    print("  Skip in CI: pytest --profile=<name> -m \"not manual\"")
+
+    if not ask_yn("Enable manual tests?", default=False):
+        return {
+            "enabled":     False,
+            "ethernet":    {"link_test": [], "cable_id": []},
+            "sd_card":     {"enabled": False},
+            "rtc_battery": {"enabled": False},
+        }
+
+    # ── Ethernet link / cable-ID tests ───────────────────────────────────────
+    print()
+    all_ifaces = probe_net_interfaces()
+    eth_names  = [i["name"] for i in all_ifaces if not i["wifi"]]
+    detected(f"Ethernet interfaces: {eth_names or 'none'}")
+
+    link_test: list[dict] = []
+    cable_id:  list[dict] = []
+
+    if eth_names:
+        if ask_yn("Configure manual link-detect tests (connect / disconnect)?", default=False):
+            print("  For each interface enter whether to include it in the link-detect test.")
+            for name in eth_names:
+                if ask_yn(f"  Test link detect on {name}?", default=True):
+                    entry: dict = {"name": name}
+                    desc = ask(f"    Description for {name}", default="", allow_empty=True)
+                    if desc:
+                        entry["description"] = desc
+                    tmo = ask_int(f"    Link timeout for {name} (s)", default=15)
+                    if tmo != 15:
+                        entry["timeout_s"] = tmo
+                    link_test.append(entry)
+
+        if ask_yn("Configure cable-ID tests (verify which OS interface → which network)?",
+                  default=False):
+            print("  For each interface enter its network label (printed on the cable/switch).")
+            for name in eth_names:
+                lbl = ask(
+                    f"  Network label for {name} (e.g. MANAGEMENT, DATA) — Enter to skip",
+                    default="", allow_empty=True,
+                ) or None
+                if lbl:
+                    entry = {"name": name, "network_label": lbl}
+                    desc = ask(f"    Description for {name}", default="", allow_empty=True)
+                    if desc:
+                        entry["description"] = desc
+                    cable_id.append(entry)
+
+    # ── SD card ──
+    print()
+    sd_devs = sorted(glob_paths("/dev/mmcblk*"))
+    detected(f"MMC/SD block devices: {sd_devs or 'none found'}")
+    sd_enabled = ask_yn("Enable SD card test (insert/write/read/remove)?",
+                        default=bool(sd_devs))
+    sd: dict = {"enabled": sd_enabled}
+    if sd_enabled:
+        sd["device"] = ask("SD card block device", default=sd_devs[0] if sd_devs else "/dev/mmcblk0")
+        min_size = ask_float_or_none("Minimum card size (MB) — Enter to skip")
+        if min_size is not None:
+            sd["min_size_mb"] = int(min_size)
+        min_wr = ask_float_or_none("Minimum write throughput (MB/s) — Enter to skip")
+        if min_wr is not None:
+            sd["min_write_mbps"] = min_wr
+        min_rd = ask_float_or_none("Minimum read throughput (MB/s) — Enter to skip")
+        if min_rd is not None:
+            sd["min_read_mbps"] = min_rd
+
+    # ── RTC battery ──
+    print()
+    rtc = probe_rtc()
+    detected(f"RTC device: {rtc['device'] or 'not found'}")
+    rtc_enabled = ask_yn("Enable RTC battery power-cycle test?",
+                         default=bool(rtc["device"]))
+    rtc_bat: dict = {"enabled": rtc_enabled}
+    if rtc_enabled:
+        rtc_bat["max_drift_s"] = ask_int(
+            "Maximum allowed RTC drift across power cycle (s)", default=5
+        )
+
+    return {
+        "enabled":     True,
+        "ethernet":    {"link_test": link_test, "cable_id": cable_id},
+        "sd_card":     sd,
+        "rtc_battery": rtc_bat,
+    }
+
+
 # ── YAML output ───────────────────────────────────────────────────────────────
 
 def _none_representer(dumper, _):
@@ -782,6 +908,7 @@ def main() -> None:
     profile["network"]       = cfg_network()
     profile["serial"]        = cfg_serial()
     profile["stress"]        = cfg_stress()
+    profile["manual"]        = cfg_manual()
 
     section("SAVE PROFILE")
     profiles_dir = Path(__file__).resolve().parent.parent / "profiles"

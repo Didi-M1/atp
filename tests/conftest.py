@@ -8,6 +8,12 @@ import pytest
 
 from atp.profile import load_profile, ProfileIncompleteError
 from atp.reporter import PdfReporter
+from atp.stability import (
+    is_continuation,
+    load_passed_tests,
+    record_passed_test,
+    clear_session,
+)
 
 
 # ──────────────────────────────────────────────
@@ -80,6 +86,53 @@ def pytest_configure(config: pytest.Config) -> None:
         pytest.exit(f"\nProfile not found: {exc}", returncode=2)
     except ProfileIncompleteError as exc:
         pytest.exit(f"\nProfile incomplete:\n{exc}", returncode=2)
+
+
+# ──────────────────────────────────────────────
+# Test ordering and reboot-continuation hooks
+# ──────────────────────────────────────────────
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """On a fresh (non-continuation) run, clear any stale session state."""
+    if not is_continuation():
+        clear_session()
+
+
+def pytest_collection_modifyitems(
+    session: pytest.Session,
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    """Reorder and filter the collected test list.
+
+    1. Move stability tests to run *last* so all other tests complete before
+       the first reboot fires.  This means the reboot-continuation script only
+       ever needs to resume stability — nothing else is left unrun.
+
+    2. In a continuation session (reboot state file exists), mark tests that
+       already passed as SKIP so they are not repeated unnecessarily.
+    """
+    # ── 1. Stability last ─────────────────────────────────────────────────
+    stability = [i for i in items if "test_stability" in i.nodeid]
+    others    = [i for i in items if "test_stability" not in i.nodeid]
+    items[:] = others + stability
+
+    # ── 2. Skip already-passed tests after a reboot ───────────────────────
+    if not is_continuation():
+        return
+    passed = load_passed_tests()
+    if not passed:
+        return
+    skip = pytest.mark.skip(reason="already passed before reboot")
+    for item in items:
+        if item.nodeid in passed:
+            item.add_marker(skip)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Persist each passing test ID so it can be skipped after a reboot."""
+    if report.when == "call" and report.passed:
+        record_passed_test(report.nodeid)
 
 
 # ──────────────────────────────────────────────

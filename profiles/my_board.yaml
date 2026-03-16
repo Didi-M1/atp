@@ -10,15 +10,15 @@ system:
     min_cores: 12
     expected_vendor: GenuineIntel
     expected_model: 12th Gen Intel(R) Core(TM) i5-12400F
-    max_temp_c: 25
+    max_temp_c: null
   ram:
-    min_total_mb: 31000
+    min_total_mb: 31929
   storage:
     devices:
-    - path: /dev/nvme0n1
+    - path: /dev/nvme1n1
       min_size_gb: 214
       type: nvme
-    - path: /dev/nvme1n1
+    - path: /dev/nvme0n1
       min_size_gb: 838
       type: nvme
 peripherals:
@@ -29,8 +29,7 @@ peripherals:
   spi:
     enabled: false
   ethernet:
-    enabled: true
-    interfaces: []
+    enabled: false
   i2c:
     enabled: true
     buses:
@@ -54,7 +53,7 @@ peripherals:
     expected_ssid: null
   bluetooth:
     enabled: false
-    assert_absent: true
+    assert_absent: false
   audio:
     enabled: true
     expected_playback_cards: 6
@@ -80,7 +79,9 @@ firmware:
       bios_version: F19
       bios_date: 09/27/2024
   uefi:
-    enabled: false
+    enabled: true
+    boot_order_first: hdd
+    power_restore: null
 custom_checks: []
 stability:
   reboot:
@@ -91,29 +92,18 @@ network:
   enabled: false
 serial:
   enabled: false
-
 stress:
   enabled: true
   duration_s: 30
-
   cpu:
     enabled: true
-    workers: null             # use all 12 logical cores
-    min_throughput_mbps: null
-
+    workers: 12
   ram:
     enabled: true
-    size_mb: null             # 25% of 32 GB ≈ 8 GB
-    min_write_mbps: null
-    min_read_mbps: null
-
+    size_mb: 7982
   disk:
     enabled: true
     path: /tmp
     size_mb: 512
-    min_write_mbps: null
-    min_read_mbps: null
-
   gpu:
-    enabled: true             # NVIDIA GPU — requires glmark2
-    min_score: null
+    enabled: false

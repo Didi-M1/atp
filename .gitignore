@@ -26,8 +26,9 @@ profiles/didi_desktop.yaml
 *.html
 *.pdf
 
-# ── ATP runtime state (reboot tests) ──────────
+# ── ATP runtime state (reboot tests / auto-run) ──
 reboot_state.json
+.atp-autorun
 
 # ── IDE / editor ──────────────────────────────
 .vscode/
