@@ -145,7 +145,7 @@ network:
   interface: eth0
   peer_ip: 192.168.200.2        # peer VM launched by qemu-peer.sh
 
-  mtu: 1500
+  mtu: 1530
   # jumbo_mtu: null             # QEMU e1000 does not support jumbo frames
 
   ping_count: 10                # fewer pings for quicker framework validation
@@ -164,6 +164,25 @@ serial:
       description: "QEMU serial 1 — PTY path printed by QEMU at startup"
       loopback: false
 
+# ──────────────────────────────────────────────
+# MANUAL TESTS
+# ──────────────────────────────────────────────
+manual:
+  enabled: false              # QEMU has no physical cables or removable media
+
+  ethernet:
+    link_test: []             # no physical cables in QEMU
+    cable_id:  []
+
+  sd_card:
+    enabled: false
+
+  rtc_battery:
+    enabled: false
+
+# ──────────────────────────────────────────────
+# STRESS
+# ──────────────────────────────────────────────
 stress:
   enabled: true
   duration_s: 15              # shorter duration — QEMU is slower than real hardware
