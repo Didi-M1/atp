@@ -1,12 +1,15 @@
-"""System info tests: CPU, RAM, storage, temperature.
+"""System info tests: CPU, RAM, storage, temperature, RTC.
 
 Profile keys used (all under 'system'):
     cpu.min_cores, cpu.expected_vendor, cpu.expected_model, cpu.max_temp_c
     ram.min_total_mb
     storage.devices[].path, .min_size_gb
+    rtc.device, rtc.min_year, rtc.max_drift_s
 """
 from __future__ import annotations
 
+import datetime
+import os
 import pytest
 
 from atp.utils import run_cmd, read_file, tool_exists
@@ -189,3 +192,82 @@ class TestStorage:
                 pass
         except OSError as exc:
             pytest.fail(f"Filesystem not writable: {exc}")
+
+
+# ──────────────────────────────────────────────
+# RTC
+# ──────────────────────────────────────────────
+
+class TestRTC:
+
+    @pytest.fixture(autouse=True)
+    def _require(self, profile):
+        sys_cfg = profile.get("system", {})
+        if not sys_cfg.get("enabled", True):
+            pytest.skip("system tests disabled in profile")
+        if not sys_cfg.get("rtc", {}).get("enabled", True):
+            pytest.skip("rtc tests disabled in profile")
+
+    def _rtc_cfg(self, profile) -> dict:
+        return profile.get("system", {}).get("rtc", {})
+
+    def test_rtc_device_exists(self, profile):
+        device = self._rtc_cfg(profile).get("device", "/dev/rtc0")
+        assert os.path.exists(device), f"RTC device not found: {device}"
+
+    def test_rtc_readable(self, profile):
+        """hwclock must read the hardware clock without error."""
+        if not tool_exists("hwclock"):
+            pytest.skip("hwclock not available")
+
+        rc, out, err = run_cmd("hwclock --show --utc")
+        assert rc == 0, f"hwclock failed (rc={rc}): {err.strip()}"
+        assert out.strip(), "hwclock returned no output"
+
+    def test_rtc_year_sane(self, profile):
+        """Hardware clock year must be >= min_year (catches stuck-at-epoch RTC)."""
+        min_year = self._rtc_cfg(profile).get("min_year", 2020)
+        if min_year is None:
+            pytest.skip("min_year not set in profile")
+        if not tool_exists("hwclock"):
+            pytest.skip("hwclock not available")
+
+        rc, out, _ = run_cmd("hwclock --show --utc")
+        if rc != 0 or not out.strip():
+            pytest.skip("hwclock unreadable — covered by test_rtc_readable")
+
+        # hwclock output: "2024-06-01 12:34:56.789012+00:00"
+        try:
+            year = int(out.strip().split("-")[0])
+        except (ValueError, IndexError):
+            pytest.fail(f"Could not parse year from hwclock output: {out.strip()!r}")
+
+        assert year >= min_year, (
+            f"RTC year {year} is below minimum {min_year} — clock may be unset or stuck at epoch"
+        )
+
+    def test_rtc_drift(self, profile):
+        """Delta between hardware clock and system clock must be within max_drift_s."""
+        max_drift_s = self._rtc_cfg(profile).get("max_drift_s")
+        if max_drift_s is None:
+            pytest.skip("max_drift_s not set in profile")
+        if not tool_exists("hwclock"):
+            pytest.skip("hwclock not available")
+
+        before = datetime.datetime.now(datetime.timezone.utc)
+        rc, out, _ = run_cmd("hwclock --show --utc")
+        after = datetime.datetime.now(datetime.timezone.utc)
+
+        if rc != 0 or not out.strip():
+            pytest.skip("hwclock unreadable — covered by test_rtc_readable")
+
+        try:
+            hw_time = datetime.datetime.fromisoformat(out.strip())
+        except ValueError:
+            pytest.fail(f"Could not parse hwclock output: {out.strip()!r}")
+
+        sys_mid = before + (after - before) / 2
+        drift_s = abs((hw_time - sys_mid).total_seconds())
+        assert drift_s <= max_drift_s, (
+            f"RTC drift {drift_s:.1f}s exceeds allowed {max_drift_s}s"
+        )

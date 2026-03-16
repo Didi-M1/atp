@@ -3,14 +3,18 @@
 #
 # Usage:
 #   ./scripts/qemu/qemu-run.sh [ROOTFS_IMG] [--kernel BZIMAGE] [--port PORT]
+#                              [--profile PROFILE]
 #
 # Arguments:
 #   ROOTFS_IMG   Root filesystem image (raw or qcow2).
 #                Default: ../../buildroot/output/images/rootfs.ext2
 #   --kernel     Kernel image for direct boot (sets eth0 IP via cmdline).
 #                Default: ../../buildroot/output/images/bzImage
-#   --port       TCP port the DUT listens on for the peer connection.
+#   --port       UDP multicast port shared with the peer VM.
 #                Default: 15555
+#   --profile    ATP profile name to run automatically after boot.
+#                Writes a trigger file; the guest init script picks it up
+#                and runs: cd /mnt/atp && pytest --profile=PROFILE
 #
 # Environment variables:
 #   QEMU_RAM   RAM in MiB         (default: 2048)
@@ -20,7 +24,7 @@
 # The VM provides:
 #   ttyS0   → this terminal (guest console + QEMU monitor via Ctrl-a c)
 #   ttyS1   → PTY on host  (ATP serial test device — path printed at startup)
-#   eth0    → 192.168.200.1, back-to-back socket to peer VM (port 15555)
+#   eth0    → 192.168.200.1, UDP multicast segment shared with peer VM
 #   /dev/vda → virtio-blk disk from ROOTFS_IMG
 #   9p tag "atp" → ATP project directory (auto-mounted at /mnt/atp on boot)
 #
@@ -45,6 +49,7 @@ DEFAULT_KERNEL="${BR_IMAGES}/bzImage"
 ROOTFS_IMG="${1:-}"
 KERNEL=""
 SOCKET_PORT="15555"
+PROFILE=""
 
 # First positional arg may be the rootfs image; skip if it starts with '--'
 case "${ROOTFS_IMG}" in
@@ -54,8 +59,9 @@ esac
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --kernel) KERNEL="$2";      shift 2 ;;
-        --port)   SOCKET_PORT="$2"; shift 2 ;;
+        --kernel)  KERNEL="$2";      shift 2 ;;
+        --port)    SOCKET_PORT="$2"; shift 2 ;;
+        --profile) PROFILE="$2";     shift 2 ;;
         -h|--help) sed -n '2,/^[^#]/{ /^#/p }' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -90,17 +96,10 @@ QEMU_SMP="${QEMU_SMP:-2}"
 
 # ── Image format ───────────────────────────────────────────────────────────────
 if command -v qemu-img >/dev/null 2>&1; then
-    IMG_FMT=$(qemu-img info --output=json "$ROOTFS_IMG" 2>/dev/null \
-        | grep -o '"format"[[:space:]]*:[[:space:]]*"[^"]*"' \
-        | sed 's/.*"\([^"]*\)"/\1/')
-    IMG_FMT="${IMG_FMT:-raw}"
-else
-    MAGIC=$(dd if="$ROOTFS_IMG" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    case "$MAGIC" in
-        514669fb) IMG_FMT="qcow2" ;;
-        *)         IMG_FMT="raw"  ;;
-    esac
+    IMG_FMT=$(qemu-img info "$ROOTFS_IMG" 2>/dev/null \
+        | sed -n 's/^file format: //p')
 fi
+IMG_FMT="${IMG_FMT:-raw}"
 echo "[qemu-run] Rootfs: $(basename "$ROOTFS_IMG")  format=$IMG_FMT"
 echo "[qemu-run] Kernel: $(basename "$KERNEL")"
 
@@ -114,12 +113,16 @@ echo "---------------------------------------------------------------"
 printf "  ATP DUT VM   RAM=%s MiB   CPU=%s   vCPUs=%s\n" \
     "$QEMU_RAM" "$QEMU_CPU" "$QEMU_SMP"
 echo "  DUT IP:   192.168.200.1  (eth0)"
-echo "  Peer VM:  ./scripts/qemu/qemu-peer.sh  (start in a second terminal)"
-echo "  Socket:   listening on TCP :${SOCKET_PORT}"
+echo "  Network:  UDP multicast 230.0.0.1:${SOCKET_PORT} (shared with peer)"
 echo "  ttyS0  →  this terminal (guest console)"
 echo "  ttyS1  →  PTY  (path printed by QEMU on the next line)"
 echo "  9p tag:   atp → auto-mounted at /mnt/atp on boot"
-echo "  Run tests: cd /mnt/atp && pytest --profile=example_qemu"
+if [ -n "$PROFILE" ]; then
+    echo "  Auto-login: root / root"
+    echo "  Tests:      pytest --profile=${PROFILE}"
+else
+    echo "  Run tests: cd /mnt/atp && pytest --profile=example_qemu"
+fi
 echo "---------------------------------------------------------------"
 echo ""
 
@@ -141,8 +144,10 @@ set -- "$@" -m     "$QEMU_RAM"
 set -- "$@" -smp   "$QEMU_SMP"
 # Disk: write to qcow2 overlay; backing file (rootfs.ext2) is opened read-only
 set -- "$@" -drive "file=${OVERLAY},format=qcow2,if=virtio"
-# Network: DUT listens; peer VM connects (qemu-peer.sh)
-set -- "$@" -netdev "socket,id=net0,listen=:${SOCKET_PORT}"
+# Network: UDP multicast — both VMs join the same group on localhost.
+# No TCP connection to establish, so there is no timing race between DUT
+# and peer startup.  Use a different port per test session to avoid conflicts.
+set -- "$@" -netdev "socket,id=net0,mcast=230.0.0.1:${SOCKET_PORT},localaddr=127.0.0.1"
 set -- "$@" -device "e1000,netdev=net0"
 # virtio-9p: exports ATP directory as tag "atp"
 set -- "$@" -virtfs "local,path=${ATP_DIR},mount_tag=atp,security_model=passthrough,id=atp0"
@@ -162,5 +167,96 @@ set -- "$@" -nographic
 set -- "$@" -kernel "$KERNEL"
 set -- "$@" -append "$KERNEL_APPEND"
 
-exec "$@"
-# (trap cleanup runs after QEMU exits)
+# ── Launch ─────────────────────────────────────────────────────────────────────
+if [ -n "$PROFILE" ]; then
+    # Auto-login and run tests via expect
+    command -v expect >/dev/null 2>&1 || {
+        echo "ERROR: 'expect' is required for --profile. Install: sudo apt install expect" >&2
+        exit 1
+    }
+
+    # Tell atp-reboot-continue.sh to step aside — expect owns the console and
+    # will run the stability continuation in the foreground after each reboot.
+    touch "${ATP_DIR}/.atp-expect-mode"
+
+    # Write the QEMU args to a temp wrapper script that expect can spawn.
+    # Single-quote each arg, escaping any internal single quotes.
+    QEMU_WRAPPER=$(mktemp /tmp/atp-qemu-XXXXXX.sh)
+    # Write the expect script.
+    # The heredoc expands shell variables $QEMU_WRAPPER and ${PROFILE}.
+    # Tcl variables ($rebooted) must be written as \$rebooted so the shell
+    # does not expand them — they arrive in the .tcl file as plain $rebooted.
+    EXPECT_SCRIPT=$(mktemp /tmp/atp-expect-XXXXXX.tcl)
+    trap 'rm -f "$OVERLAY" "$QEMU_WRAPPER" "$EXPECT_SCRIPT" "${ATP_DIR}/.atp-expect-mode"' EXIT INT TERM
+    {
+        printf '#!/bin/sh\nexec'
+        for arg in "$@"; do
+            printf " '%s'" "$(printf '%s' "$arg" | sed "s/'/'\\\\''/g")"
+        done
+        printf '\n'
+    } > "$QEMU_WRAPPER"
+    chmod +x "$QEMU_WRAPPER"
+
+    cat > "$EXPECT_SCRIPT" << EXPECT_EOF
+log_user 1
+set timeout 120
+spawn $QEMU_WRAPPER
+
+# ── Boot and login ───────────────────────────────────────────────────────
+expect {
+    "buildroot login:" { send "root\r"; exp_continue }
+    "Password:"        { send "root\r"; exp_continue }
+    "# "               {}
+}
+
+# ── Wait for peer VM ─────────────────────────────────────────────────────
+send "/mnt/atp/scripts/qemu/atp-wait-peer.sh ${PROFILE}\r"
+expect "# "
+
+# ── Phase 1: all tests except stability ──────────────────────────────────
+send "cd /mnt/atp && pytest --profile=${PROFILE} --ignore=tests/test_stability.py\r"
+set timeout -1
+expect "# "
+
+# ── Countdown ────────────────────────────────────────────────────────────
+# Output from puts goes to this terminal (not into the VM).
+puts "\n--------------------------------------------------"
+puts " Non-stability tests done."
+puts " Stability tests will start in 10 seconds."
+puts " Press Ctrl-a x to abort."
+puts "--------------------------------------------------"
+for {set i 10} {\$i >= 1} {incr i -1} {
+    puts " \$i..."
+    after 1000
+}
+puts " Starting stability tests now.\n"
+
+# ── Phase 2: stability tests (handles reboots) ───────────────────────────
+# rebooted==0: we are in the original session; "# " means tests finished.
+# rebooted==1: we are in a fresh shell after a reboot; "# " means run the
+#              stability continuation in the foreground and reset to 0.
+send "cd /mnt/atp && pytest --profile=${PROFILE} tests/test_stability.py\r"
+set rebooted 0
+while 1 {
+    expect {
+        eof                { break }
+        "buildroot login:" { set rebooted 1; send "root\r"; exp_continue }
+        "Password:"        {                 send "root\r"; exp_continue }
+        "# "               {
+            if { \$rebooted == 0 } {
+                send "poweroff\r"
+                expect eof
+                break
+            }
+            send "cd /mnt/atp && pytest --profile=${PROFILE} tests/test_stability.py\r"
+            set rebooted 0
+        }
+    }
+}
+EXPECT_EOF
+
+    expect -f "$EXPECT_SCRIPT"
+else
+    "$@"
+fi
+# trap cleanup (EXIT) runs here after QEMU exits

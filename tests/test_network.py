@@ -237,7 +237,7 @@ class TestMTU:
 
         # Requires CAP_NET_RAW (root or appropriate capability)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
         except PermissionError:
             return None  # type: ignore[return-value]  # signal "skip"
 

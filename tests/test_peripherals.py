@@ -162,9 +162,15 @@ class TestEthernet:
 
             for line in out.splitlines():
                 if "speed:" in line.lower():
-                    # e.g. "Speed: 1000Mb/s"
+                    # e.g. "Speed: 1000Mb/s" or "Speed: Unknown!" when no link
                     token = line.split(":", 1)[1].strip()
-                    actual_mbps = int("".join(filter(str.isdigit, token)))
+                    digits = "".join(filter(str.isdigit, token))
+                    if not digits:
+                        pytest.fail(
+                            f"{name} reports unknown speed ('{token}') — "
+                            f"interface has no link. Connect an Ethernet cable and re-run."
+                        )
+                    actual_mbps = int(digits)
                     assert actual_mbps == expected_mbps, (
                         f"{name}: expected {expected_mbps} Mb/s, got {actual_mbps} Mb/s — "
                         f"check the cable and switch port speed."
